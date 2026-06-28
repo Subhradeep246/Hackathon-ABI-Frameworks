@@ -22,11 +22,12 @@ assessments, and routing each patient to **auto-accept**, **flag for review**, o
    - [Phase 3 — Decide](#phase-3--decide)
 6. [Rate limiting & resilience](#rate-limiting--resilience)
 7. [The eligibility rules](#the-eligibility-rules)
-8. [Data model](#data-model)
-9. [HTTP API](#http-api)
-10. [CLI reference](#cli-reference)
-11. [Project layout](#project-layout)
-12. [Scaling to millions](#scaling-to-millions)
+8. [ML decision tree (advisory)](#ml-decision-tree-advisory)
+9. [Data model](#data-model)
+10. [HTTP API](#http-api)
+11. [CLI reference](#cli-reference)
+12. [Project layout](#project-layout)
+13. [Scaling to millions](#scaling-to-millions)
 
 ---
 
@@ -260,6 +261,8 @@ limit rather than fighting it.
 The rule engine (`backend/eligibility/rules.py`) evaluates each patient **in order**
 and short-circuits on the first match:
 
+![Eligibility rules flowchart](docs/assets/rules-engine-flowchart.png)
+
 | # | Condition | Decision | Reason |
 |---|---|---|---|
 | 1 | No active Medicare Part B | **reject** | "No active Medicare Part B coverage." |
@@ -288,6 +291,29 @@ Supporting logic:
 expose coverage (it's a separate per-patient call), so it's not even possible to
 filter there. More importantly, in a billing tool a non-Part-B patient is a
 meaningful, auditable *result* — not noise to silently drop.
+
+---
+
+## ML decision tree (advisory)
+
+**Does not override rules.** The tree is trained on rule outputs to cross-check
+eligibility — it learns *would the rules have said auto_accept?* — not new medical
+logic. Train with `ml/train_model.py`, apply with `python backend/cli.py apply-model`.
+Results appear in the purple **ML cross-check** box on the dashboard.
+
+![ML decision tree](docs/assets/ml-decision-tree.png)
+
+On disagreement with rules, **billers follow rules, not ML.**
+
+| Output | Meaning |
+|--------|---------|
+| `model_suggestion` | `auto_accept` or `not_auto_accept` |
+| `model_probability` | Confidence 0–100% |
+| `rule_agrees` | 1 if ML matches rules, 0 if not |
+
+**Train in Colab:** run `export-features` after the pipeline, upload
+`ml/exports/features.csv`, follow `ml/COLAB.md`, then place `decision_tree.joblib`
+in `ml/models/`.
 
 ---
 
@@ -365,6 +391,7 @@ python backend/cli.py <command>
 ├── frontend/                # Static dashboard (served at /)
 ├── schema/schema.sql        # SQLite schema
 ├── scripts/start.sh         # One-command launch helper
+├── docs/assets/             # Rules + ML flowchart images (README)
 ├── ml/                      # Optional decision-tree training assets
 ├── data/pulse.db            # Local SQLite database (created at runtime)
 ├── API.md                   # PCC API contract + retry requirements
