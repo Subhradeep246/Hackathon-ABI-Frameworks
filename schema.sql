@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS diagnoses (
 
 CREATE INDEX IF NOT EXISTS idx_diagnoses_patient   ON diagnoses(patient_internal_id);
 CREATE INDEX IF NOT EXISTS idx_diagnoses_source_id ON diagnoses(source_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_diagnoses_unique_source
+    ON diagnoses(patient_internal_id, source_id) WHERE source_id IS NOT NULL;
 
 
 -- coverage: raw insurance coverage records, one row per coverage period reported by PCC.
@@ -69,6 +71,8 @@ CREATE TABLE IF NOT EXISTS coverage (
 
 CREATE INDEX IF NOT EXISTS idx_coverage_patient   ON coverage(patient_internal_id);
 CREATE INDEX IF NOT EXISTS idx_coverage_source_id ON coverage(source_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_coverage_unique_source
+    ON coverage(patient_internal_id, source_id) WHERE source_id IS NOT NULL;
 
 
 -- notes: free-text progress notes (Structured SPN and Envive narrative formats all land here
@@ -95,6 +99,8 @@ CREATE TABLE IF NOT EXISTS notes (
 CREATE INDEX IF NOT EXISTS idx_notes_patient   ON notes(patient_internal_id);
 CREATE INDEX IF NOT EXISTS idx_notes_date      ON notes(effective_date);
 CREATE INDEX IF NOT EXISTS idx_notes_source_id ON notes(source_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_notes_unique_source
+    ON notes(patient_internal_id, source_id) WHERE source_id IS NOT NULL;
 
 
 -- assessments: structured wound assessment forms (these are the most reliably "known" source).
@@ -121,6 +127,8 @@ CREATE TABLE IF NOT EXISTS assessments (
 CREATE INDEX IF NOT EXISTS idx_assessments_patient   ON assessments(patient_internal_id);
 CREATE INDEX IF NOT EXISTS idx_assessments_date      ON assessments(assessment_date);
 CREATE INDEX IF NOT EXISTS idx_assessments_source_id ON assessments(source_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_assessments_unique_source
+    ON assessments(patient_internal_id, source_id) WHERE source_id IS NOT NULL;
 
 
 -- ============================================================
@@ -295,3 +303,52 @@ CREATE TABLE IF NOT EXISTS facility_sync_status (
 );
 
 CREATE INDEX IF NOT EXISTS idx_facility_sync_status_run ON facility_sync_status(sync_run_id);
+
+
+-- ============================================================
+-- PERFORMANCE / CACHING
+-- ============================================================
+
+-- extraction_cache: keyed on SHA-256 of source text/json so re-runs skip re-parsing
+-- unchanged documents. The parser writes here after each extraction; future runs
+-- check the hash before calling the LLM/regex parser.
+CREATE TABLE IF NOT EXISTS extraction_cache (
+    cache_pk       SERIAL PRIMARY KEY,
+    content_hash   TEXT NOT NULL UNIQUE,
+    source_table   TEXT NOT NULL CHECK (source_table IN ('notes', 'assessments')),
+    parsed_json    JSONB NOT NULL,
+    parser_version TEXT NOT NULL,
+    cached_at      TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_extraction_cache_hash ON extraction_cache(content_hash);
+
+
+-- sync_watermarks: persists last_success_at per facility/endpoint across runs.
+-- ingest.py can read this to auto-derive --since without needing a prior sync_run record.
+-- Updated by ingest after each successful endpoint fetch.
+CREATE TABLE IF NOT EXISTS sync_watermarks (
+    watermark_pk    SERIAL PRIMARY KEY,
+    facility_id     INTEGER NOT NULL,
+    endpoint        TEXT NOT NULL,
+    last_success_at TIMESTAMPTZ NOT NULL,
+    UNIQUE(facility_id, endpoint)
+);
+
+
+-- ============================================================
+-- MODEL OUTPUT
+-- ============================================================
+
+-- model_insights: one row per patient per model run.
+-- Stores Colab decision-tree output without bloating the eligibility row.
+CREATE TABLE IF NOT EXISTS model_insights (
+    insight_pk          SERIAL PRIMARY KEY,
+    patient_internal_id INTEGER NOT NULL REFERENCES patients(patient_internal_id),
+    model_version       TEXT NOT NULL,
+    decision_tree_json  JSONB NOT NULL,
+    computed_at         TIMESTAMPTZ NOT NULL,
+    sync_run_id         INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_model_insights_patient ON model_insights(patient_internal_id);
