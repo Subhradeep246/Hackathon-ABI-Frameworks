@@ -1,0 +1,13 @@
+[project]
+name = "wound-care-triage-mcp"
+version = "0.1.0"
+description = "FastMCP server: extraction + decision tools for wound-care billing triage."
+requires-python = ">=3.10"
+dependencies = ["fastmcp>=3.4.2"]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+python_files = ["test_*.py"]
