@@ -427,28 +427,6 @@ The `since` parameter lets you poll for changes rather than re-fetching entire t
 | `GET /pcc/notes` | `effective_date` |
 | `GET /pcc/assessments` | `assessment_date` |
 
-**Example — polling loop:**
-
-```python
-import httpx
-from datetime import datetime, timezone, timedelta
-
-BASE = "https://hackathon.prod.pulsefoundry.ai"
-last_sync = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-
-# Get recently modified patients
-patients = get_with_retry(f"{BASE}/pcc/patients", {"facility_id": 101, "since": last_sync})
-
-for p in patients:
-    patient_id_str = p["patient_id"]   # e.g. "FA-001"  — for diagnoses/coverage
-    patient_id_int = p["id"]           # e.g. 1         — for notes/assessments
-
-    diagnoses = get_with_retry(f"{BASE}/pcc/diagnoses", {"patient_id": patient_id_str})
-    coverage  = get_with_retry(f"{BASE}/pcc/coverage",  {"patient_id": patient_id_str})
-    notes      = get_with_retry(f"{BASE}/pcc/notes",      {"patient_id": patient_id_int, "since": last_sync})
-    assessments = get_with_retry(f"{BASE}/pcc/assessments", {"patient_id": patient_id_int, "since": last_sync})
-```
-
 ---
 
 ## Payer Codes Reference
