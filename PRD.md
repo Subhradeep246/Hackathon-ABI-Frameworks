@@ -69,7 +69,7 @@ These are details we cross-checked from the actual API spec; they shape the rule
 - Real PHI handling / HIPAA compliance (data is synthetic)
 - High availability, multi-region, auto-scaling infra
 - Real auth / RBAC (use a stub `org_id`)
-- Kubernetes — Docker Compose is enough for the demo
+- Kubernetes / containerization — dev runs natively on macOS, containers come back at deploy time
 - Distributed tracing (OpenTelemetry) — structured logs + Prometheus metrics only
 - Real secret management (Vault / AWS Secrets Manager) — `.env` with `.env.example` committed
 
@@ -80,7 +80,7 @@ Each non-goal has a documented "what we'd add for prod" note in the README. That
 ## 4. Tech Stack
 
 ### Storage
-- **PostgreSQL 16** — primary OLTP store, runs in Docker Compose locally, drop-in RDS / Cloud SQL in prod
+- **PostgreSQL 16** — primary OLTP store. Dev: native via `brew install postgresql@16`. Prod: drop-in RDS / Cloud SQL.
 - **Redis 7** — LLM output cache (keyed by content hash) + API response cache
 - **Alembic** — versioned schema migrations
 - **pgbouncer** — connection pooling (config committed; only spun up at higher worker counts)
@@ -96,7 +96,7 @@ Each non-goal has a documented "what we'd add for prod" note in the README. That
 - `sqlalchemy` 2.0 + `asyncpg` — typed ORM, async Postgres
 - `fastapi` + `uvicorn` — REST API
 - `structlog` — structured JSON logs
-- `prometheus-client` — `/metrics` endpoint scraped locally by Grafana
+- `prometheus-client` — `/metrics` endpoint always exposed; scraped by Prometheus/Grafana only in prod (or locally if you `brew install prometheus grafana`, but not required for the demo)
 - `uv` — env / dep manager
 
 ### Extraction
@@ -124,13 +124,13 @@ Each non-goal has a documented "what we'd add for prod" note in the README. That
 - `pytest` + `pytest-asyncio` — unit tests for extraction + rules + ingest contract
 - `ruff` + `black` — Python lint/format
 - `mypy --strict` on `extraction/` and `eligibility/` (highest blast radius)
-- **Docker Compose** — Postgres + Redis + Prefect server + API + worker + web in one command
-- `pnpm` — Node deps
-- `Makefile` — `make bootstrap`, `make sync`, `make scale-test`, `make demo`
+- **Native dev on macOS** — Postgres 16 + Redis 7 via Homebrew system services; FastAPI + Prefect + Next.js launched in one terminal via `honcho` (Procfile). No Docker locally. Containerization comes back for prod (see [`PRODUCTION_GAPS.md`](./PRODUCTION_GAPS.md)).
+- `npm` — Node deps
+- `Makefile` — `make bootstrap`, `make up`, `make sync`, `make scale-test`, `make demo`
 
-### Observability (local-only — flagged as gap)
-- structlog → console + JSON file
-- Prometheus client on the API + worker → local Grafana board
+### Observability (lean locally — flagged as gap)
+- structlog → console (color in dev, JSON in prod) + stdout
+- Prometheus client on the API and workers exposing `/metrics` (always-on); local scraping is optional via `brew install prometheus grafana` but not part of the default `make up`
 - README documents the prod path: ship logs to Loki, metrics to Grafana Cloud, traces to Tempo, alerts via PagerDuty.
 
 ### Why Postgres (not DuckDB)
@@ -218,7 +218,7 @@ DuckDB is excellent for analytics-only workloads, but our path is OLTP-style ing
                 │
                 ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Local observability: structlog + Prometheus → Grafana              │
+│  Local observability: structlog → stdout, /metrics always exposed   │
 │  Prod path (documented): Loki + Grafana Cloud + Tempo + PagerDuty   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -317,19 +317,19 @@ CREATE INDEX ON eligibility_decisions (org_id, decided_at DESC);
 Phase 1–3 are **required for submission**. Phase 4 is **WOW**. Phase 4.5 is **scale benchmark**. Phase 5 is **demo polish**.
 
 ### Phase 0 — Infra Foundation (3–4 hr, whole team)
-**Deliverable:** `docker compose up` spins up Postgres + Redis + Prefect server + FastAPI + Next.js + Grafana. `make migrate` creates all tables.
+**Deliverable:** `make bootstrap` from a clean clone installs system + Python + Node deps, starts Postgres + Redis, creates the database, and runs migrations. `make up` launches the app stack via honcho.
 
-- [ ] Repo layout: `pipeline/`, `extraction/`, `eligibility/`, `api/`, `web/`, `synthetic/`, `infra/`, `tests/`
-- [ ] `docker-compose.yml` with all services + healthchecks
-- [ ] `Makefile` targets: `bootstrap`, `migrate`, `sync`, `extract`, `decide`, `scale-test`, `demo`, `test`
+- [ ] Repo layout: `pipeline/`, `extraction/`, `eligibility/`, `api/`, `web/`, `synthetic/`, `tests/`
+- [ ] `Makefile` targets: `bootstrap`, `up`, `down`, `migrate`, `psql`, `sync`, `extract`, `decide`, `scale-test`, `test`, `demo`
+- [ ] `Procfile` for honcho — runs Prefect server, FastAPI, Next.js in one terminal
 - [ ] Alembic initialized, baseline migration with the §6 schema
 - [ ] `.env.example` committed; secrets gitignored
 - [ ] Prefect server running, smoke test flow ("hello world") visible in UI
 - [ ] FastAPI `/healthz` + `/readyz` + `/metrics` endpoints
 - [ ] Next.js scaffolded with one page calling `/api/healthz`
-- [ ] GitHub Actions: lint + test on PR
+- [ ] GitHub Actions: lint + test on PR (uses Postgres + Redis service containers in CI)
 
-**Verify:** new teammate clones the repo and runs `make bootstrap && make demo` — everything comes up clean.
+**Verify:** new teammate clones the repo and runs `make bootstrap && make up` — everything comes up clean.
 
 ### Phase 1 — Ingestion (4–5 hr, owner: Person A)
 **Deliverable:** `make sync` runs Prefect flow that populates raw_* tables idempotently. Re-running yields zero new rows. Incremental sync via `since` works.
@@ -489,7 +489,7 @@ Rule-based flagging of suspicious wound trajectory patterns.
 
 | Person | Phase 0 | Phase 1 | Phase 2 | Phase 3 | Phase 4 | Phase 4.5 |
 |---|---|---|---|---|---|---|
-| **A — Pipeline** | Docker Compose, Prefect, Makefile | Ingestion + retry + idempotency | Help with cache layer | API endpoints | — | Scale benchmark, synthetic data |
+| **A — Pipeline** | Makefile, Procfile, Prefect bootstrap | Ingestion + retry + idempotency | Help with cache layer | API endpoints | — | Scale benchmark, synthetic data |
 | **B — Extraction** | Alembic, schema | Help with sync test fixtures | Regex + LLM + cross-val | Rules engine + audit + tests | — | LLM throughput tuning |
 | **C — Frontend** | Next.js scaffold, design tokens | — | Patient detail wireframe | Dashboard + table + drawer | Voice UI integration | Virtualization tuning |
 | **D — WOW / Glue** | DevX, env setup, GH Actions | Observability (Grafana board) | Demo data curation | Polish, copy, hero patients | Voice copilot end-to-end | Benchmark dashboard |
@@ -500,7 +500,7 @@ If only 3 people, fold D's pipeline tasks into A; D starts voice in Phase 3.
 
 ## 10. Critical Files (to create)
 
-- `docker-compose.yml`, `Makefile`, `.env.example`
+- `Makefile`, `Procfile`, `.env.example`
 - `infra/grafana/*.json` — preloaded dashboards
 - `pipeline/client.py` — httpx + tenacity
 - `pipeline/flows.py` — Prefect flows
@@ -526,7 +526,7 @@ If only 3 people, fold D's pipeline tasks into A; D starts voice in Phase 3.
 ## 11. Verification Checklist (end-to-end)
 
 Before calling it done:
-1. `make bootstrap` from a clean clone brings up all services
+1. `make bootstrap && make up` from a clean clone brings up all services (Postgres + Redis via brew, api + web + prefect via honcho)
 2. `make sync` → all 300 patients ingested, zero unhandled 429s in logs, second run is a no-op
 3. `make extract` → `extracted_wounds` populated; second run >95% cache hits
 4. `make decide` → eligibility distribution looks sane (not 100% in any bucket)
@@ -561,9 +561,9 @@ Before calling it done:
 ## 13. Open Questions
 
 1. **Confirm scope:** drop to 1 WOW (voice copilot) + scale benchmark? Or push harder, accept timeline slip, and ship A + B?
-2. **Prefect Cloud vs self-hosted?** Default: self-hosted in Docker Compose for the demo.
+2. **Prefect Cloud vs self-hosted?** Default: self-hosted locally (Prefect server started by honcho).
 3. **Baseten model picks?** Benchmarked in Phase 2.
-4. **Demo machine spec:** confirm laptop can run Docker Compose with Postgres + Redis + Prefect + Grafana + 2 Node processes simultaneously.
+4. **Demo machine spec:** confirm laptop can run Postgres + Redis (brew services) + Prefect + FastAPI + Next.js (honcho) simultaneously.
 5. **Synthetic data realism:** copy distributions from the 300 real records, or hand-author a richer distribution? Default: copy real.
 6. **Envive `note_type` string:** discovered from live data in Phase 1; gate LLM tier accordingly.
 7. **Wound ICD-10 list completeness:** confirm with a clinical reviewer if any of the codes in `eligibility/wound_codes.py` are too broad/narrow for ABI's billing rules.
