@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -48,8 +49,10 @@ def init_db(database_url: str | None = None, schema_path: Path = SCHEMA_PATH) ->
     conn = get_connection(database_url)
     try:
         sql = schema_path.read_text()
+        # Strip -- comments before splitting so semicolons inside comments don't confuse the parser
+        sql_stripped = re.sub(r"--[^\n]*", "", sql)
         cur = conn.cursor()
-        for statement in sql.split(";"):
+        for statement in sql_stripped.split(";"):
             statement = statement.strip()
             if statement:
                 cur.execute(statement)
