@@ -17,11 +17,17 @@ import argparse
 import logging
 import os
 import random
-import time
 from typing import Optional
 
 import requests
 from dotenv import load_dotenv
+from tenacity import (
+    RetryError,
+    before_sleep_log,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+)
 
 import storage
 
@@ -38,44 +44,50 @@ log = logging.getLogger(__name__)
 # HTTP CLIENT
 # ============================================================
 
+class _RateLimited(Exception):
+    def __init__(self, retry_after: float) -> None:
+        self.retry_after = retry_after
+
+
+class _ServerError(Exception):
+    pass
+
+
+def _wait(retry_state) -> float:
+    exc = retry_state.outcome.exception()
+    if isinstance(exc, _RateLimited):
+        return exc.retry_after + random.uniform(0, 1)
+    return min(2 ** retry_state.attempt_number + random.uniform(-0.5, 0.5), 60)
+
+
 def fetch_with_retry(
     session: requests.Session,
     url: str,
     params: dict | None = None,
     max_retries: int = MAX_RETRIES,
 ) -> list:
-    """GET a URL, returning parsed JSON. Retries on 429 and 5xx with backoff."""
-    backoff = 2.0
-    for attempt in range(1, max_retries + 1):
-        try:
-            resp = session.get(url, params=params, timeout=10)
+    """GET a URL, returning parsed JSON. Retries on 429 (Retry-After) and 5xx (exponential backoff)."""
 
-            if resp.status_code == 429:
-                wait = float(resp.headers.get("Retry-After", 3)) + random.uniform(0, 1)
-                log.warning("429 rate-limited %s (attempt %d/%d) — retrying in %.1fs",
-                            url, attempt, max_retries, wait)
-                time.sleep(wait)
-                continue
+    @retry(
+        stop=stop_after_attempt(max_retries),
+        wait=_wait,
+        retry=retry_if_exception_type((_RateLimited, _ServerError, requests.Timeout)),
+        before_sleep=before_sleep_log(log, logging.WARNING),
+        reraise=False,
+    )
+    def _call():
+        resp = session.get(url, params=params, timeout=10)
+        if resp.status_code == 429:
+            raise _RateLimited(float(resp.headers.get("Retry-After", 3)))
+        if resp.status_code >= 500:
+            raise _ServerError(f"HTTP {resp.status_code}")
+        resp.raise_for_status()
+        return resp.json()
 
-            if resp.status_code >= 500:
-                wait = backoff + random.uniform(-0.5, 0.5)
-                log.warning("%d server error on %s (attempt %d/%d) — retrying in %.1fs",
-                            resp.status_code, url, attempt, max_retries, wait)
-                time.sleep(wait)
-                backoff *= 2
-                continue
-
-            resp.raise_for_status()
-            return resp.json()
-
-        except requests.Timeout:
-            wait = backoff + random.uniform(-0.5, 0.5)
-            log.warning("Timeout on %s (attempt %d/%d) — retrying in %.1fs",
-                        url, attempt, max_retries, wait)
-            time.sleep(wait)
-            backoff *= 2
-
-    raise RuntimeError(f"Failed to fetch {url} after {max_retries} attempts")
+    try:
+        return _call()
+    except RetryError as exc:
+        raise RuntimeError(f"Failed to fetch {url} after {max_retries} attempts") from exc
 
 
 # ============================================================
@@ -233,8 +245,16 @@ def ingest_facility(
         )
     log.info("Facility %d — stored %d patients", facility_id, len(patients))
 
+    # Only fetch expensive per-patient endpoints for Medicare Part B patients
+    eligible_patients = [p for p in patients if p.get("primary_payer_code") == "MCB"]
+    log.info(
+        "Facility %d — %d/%d patients eligible (MCB), skipping %d",
+        facility_id, len(eligible_patients), len(patients),
+        len(patients) - len(eligible_patients),
+    )
+
     # --- per-patient endpoints ---
-    for p in patients:
+    for p in eligible_patients:
         patient_internal_id: int = p["id"]
         patient_id: str = p["patient_id"]
 
