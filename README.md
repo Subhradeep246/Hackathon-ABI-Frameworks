@@ -2,6 +2,8 @@
 
 Rule-based wound care billing eligibility pipeline on the ABI Frameworks mock PCC API.
 
+Hackathon brief: [PRD.md](PRD.md) · Full architecture: [PROJECT_GUIDE.md](PROJECT_GUIDE.md)
+
 **Important:** The PCC API rate-limits ~30% of requests with HTTP 429. See [API.md](API.md) for retry requirements.
 
 ## Quick start
@@ -10,7 +12,7 @@ Rule-based wound care billing eligibility pipeline on the ABI Frameworks mock PC
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r backend/requirements.txt
-cp .env.example .env
+cp .env.example .env   # add BASETEN_API_KEY locally — never commit .env
 
 # Full pipeline: ingest → extract → decide
 python backend/cli.py pipeline
@@ -42,22 +44,15 @@ Open http://localhost:8000
 3. Run `ml/train_model.py` (see `ml/COLAB.md`)
 4. Place `decision_tree.joblib` in `ml/models/`
 
-## Baseten GLM chatbot
+## AI billing assistant
 
-Set in `.env`:
-```
-BASETEN_API_KEY=your_key
-BASETEN_BASE_URL=https://inference.baseten.co/v1
-BASETEN_MODEL=zai-org/GLM-5.2
-```
-
-Uses Baseten's OpenAI-compatible API for GLM 5.2 patient reasoning chat.
+Set `BASETEN_API_KEY` in `.env` (see `.env.example`). Optional — dashboard falls back to rule-based summaries without it.
 
 ## Colab MCP
 
-See `ml/COLAB.md`. Project MCP config: `.cursor/mcp.json` — restart Cursor after setup.
+See `ml/COLAB.md`.
 
-## API
+## Dashboard API
 
 - `GET /api/stats` — facility overview
 - `GET /api/patients` — filtered patient list
