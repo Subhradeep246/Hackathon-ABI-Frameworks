@@ -17,6 +17,7 @@ The honest list of what this codebase is **not** yet doing that a real productio
 | **Multi-tenancy hardening** | `org_id` on every table | Row-level security in Postgres, per-org connection pools, per-org Prefect work pools |
 | **Observability of LLM** | Local logs only | Per-call cost, latency, prompt/response logging (with redaction) to LLM-ops tooling like LangSmith or Helicone |
 | **Self-healing on PCC schema change** | Pipeline crashes | Schema-version detection + alert + graceful degradation to last-known-good schema |
+| **Containerization for deployment** | Dev runs natively on macOS (Postgres + Redis via brew, app via honcho); no Dockerfiles or compose | Multi-stage Dockerfiles per service, push to ECR/GHCR, deploy via ECS/EKS/Fly. Dev-vs-prod parity moves into CI rather than local. |
 
 ---
 

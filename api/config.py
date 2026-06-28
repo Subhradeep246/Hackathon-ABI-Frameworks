@@ -19,8 +19,8 @@ class Settings(BaseSettings):
 
     database_url: str = Field(...)
     database_url_sync: str = Field(...)
-    redis_url: str = Field(default="redis://redis:6379/0")
-    prefect_api_url: str = Field(default="http://prefect:4200/api")
+    redis_url: str = Field(default="redis://localhost:6379/0")
+    prefect_api_url: str = Field(default="http://localhost:4200/api")
 
     baseten_api_key: str = Field(default="")
     baseten_model_id_small: str = Field(default="")

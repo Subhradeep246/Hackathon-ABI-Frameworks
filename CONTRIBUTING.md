@@ -2,22 +2,28 @@
 
 This is the developer setup guide. For the hackathon brief, see [`README.md`](./README.md). For the full design, see [`PRD.md`](./PRD.md).
 
+Dev environment is **native macOS** — Postgres + Redis run via Homebrew, the app processes (FastAPI, Prefect, Next.js) run via [honcho](https://honcho.readthedocs.io/) in a single terminal. No Docker required.
+
 ---
 
 ## Prerequisites
 
-- **Docker Desktop** (or OrbStack) — for the Postgres / Redis / Prefect / API / web / Grafana stack
-- **Python 3.11+**
-- **[`uv`](https://docs.astral.sh/uv/)** — Python package manager: `curl -LsSf https://astral.sh/uv/install.sh | sh`
-- **Node.js 20+** + `npm` — only needed if you want to run the web app outside Docker
+Install these once. All available via Homebrew:
+
+```bash
+brew install postgresql@16 redis node@20 uv
+```
 
 Confirm:
 
 ```bash
-docker --version
-python3 --version  # 3.11+
+postgres --version    # PostgreSQL 16.x
+redis-server --version
+node --version        # v20.x
 uv --version
 ```
+
+If you don't have Homebrew, install it first: https://brew.sh
 
 ---
 
@@ -29,20 +35,23 @@ make bootstrap
 
 This will:
 1. Copy `.env.example` → `.env` (only if `.env` doesn't already exist)
-2. Install Python deps locally (for tests + tooling)
-3. Bring up the full Docker Compose stack
-4. Run Alembic migrations against Postgres
+2. Start Postgres + Redis as `brew services` (system daemons)
+3. Install Python deps via `uv sync`
+4. Install Node deps via `npm install` in `web/`
+5. Create the `woundiq` Postgres role + database (idempotent)
+6. Run Alembic migrations
 
-When it finishes, these URLs are live:
+When it finishes, run `make up`. That launches the app stack in one terminal.
 
 | Service | URL |
 |---|---|
 | Next.js dashboard | http://localhost:3000 |
 | FastAPI | http://localhost:8000/healthz |
 | Prefect UI | http://localhost:4200 |
-| Grafana | http://localhost:3001 |
-| Prometheus | http://localhost:9090 |
 | Postgres | `localhost:5432` (user/pass in `.env`) |
+| Redis | `localhost:6379` |
+
+To stop everything: `Ctrl-C` in the `make up` terminal, then `make down` to stop Postgres + Redis.
 
 ---
 
@@ -51,13 +60,12 @@ When it finishes, these URLs are live:
 ```
 make help          # show all targets
 make bootstrap     # first-time setup (idempotent)
-make up            # bring stack up
-make down          # bring stack down (keeps volumes)
-make nuke          # bring stack down + wipe volumes (destroys local data)
+make up            # start api + web + prefect (foreground, one terminal)
+make down          # stop Postgres + Redis system services
 make migrate       # run Alembic migrations
-make logs          # tail all service logs
-make ps            # show service status
-make psql          # psql shell on the running Postgres
+make psql          # psql shell on woundiq database
+make redis-cli     # redis-cli shell
+make db-reset      # drop + recreate woundiq DB (destroys local data)
 make test          # run pytest
 make lint          # ruff check
 make fmt           # ruff --fix + black
@@ -66,7 +74,7 @@ make check         # lint + typecheck + test
 make ci            # what GitHub Actions runs
 ```
 
-Phase 1+ targets (will work once those phases ship):
+Phase 1+ targets (work once those phases ship):
 
 ```
 make sync          # ingest from the PCC mock API
@@ -77,24 +85,28 @@ make scale-test N=1000000   # synthetic data benchmark
 
 ---
 
-## Local dev without Docker
+## Day-to-day workflow
 
-Most workflows go through Docker, but you can run tests and tooling locally:
+Open two terminals (or use a tmux split):
 
-```bash
-uv sync --extra dev
-uv run pytest
-uv run ruff check .
-uv run mypy
-```
+| Terminal | What's running |
+|---|---|
+| 1 | `make up` — api, web, prefect (live logs, color-coded by process) |
+| 2 | Free for `make test`, `make psql`, `make sync`, git, etc. |
 
-The web app outside Docker:
+Postgres + Redis stay running in the background as system services. They survive reboots until you `make down` or `brew services stop`.
 
-```bash
-cd web
-npm install
-npm run dev
-```
+---
+
+## Why no Docker?
+
+Originally Phase 0 used Docker Compose. We dropped it for local dev because:
+
+- **Faster startup** — native processes start in seconds, no daemon, no VM
+- **Lower memory** — no Docker VM eating 2-3 GB on macOS
+- **Easier debugging** — attach debugger directly, logs in the terminal
+
+Docker comes back for **production** — see [`PRODUCTION_GAPS.md`](./PRODUCTION_GAPS.md). The code itself doesn't know or care whether Postgres is native or containerized — only `make` does.
 
 ---
 
@@ -116,11 +128,10 @@ Sensitive keys never get committed — `.env` is gitignored. If you accidentally
 ├── eligibility/      Decision rules + ICD-10 wound codes (Phase 3)
 ├── synthetic/        1M-row data generator (Phase 4.5)
 ├── web/              Next.js 14 (App Router) dashboard
-├── infra/            Dockerfiles, prometheus.yml, grafana provisioning
 ├── tests/            pytest
 ├── .github/          CI workflows
-├── docker-compose.yml
 ├── Makefile          single entry point for everything
+├── Procfile          honcho process list (api, web, prefect)
 ├── pyproject.toml    Python deps + tool configs (ruff, black, mypy, pytest)
 ├── alembic.ini
 └── PRD.md            full design doc
@@ -139,4 +150,4 @@ Sensitive keys never get committed — `.env` is gitignored. If you accidentally
 
 ## What's NOT in here (production gaps)
 
-See [`PRODUCTION_GAPS.md`](./PRODUCTION_GAPS.md) for the honest list of what we'd add for real production: HA, RBAC, secret management, distributed tracing, HIPAA controls, backups/DR, cost guardrails. These are intentional deferrals — the PRD documents the path.
+See [`PRODUCTION_GAPS.md`](./PRODUCTION_GAPS.md) for the honest list of what we'd add for real production: HA, RBAC, secret management, distributed tracing, HIPAA controls, backups/DR, cost guardrails, **containerization for deployment**. These are intentional deferrals — the PRD documents the path.

@@ -57,9 +57,10 @@ logs/
 # Prefect
 .prefect/
 prefect.db
+prefect.db-*
 
-# Docker volumes
-.docker-data/
+# Honcho / process manager
+.honcho.pid
 
 # Claude
 claude.md

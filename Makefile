@@ -1,98 +1,119 @@
-.PHONY: help bootstrap env install migrate up down logs ps shell db psql redis-cli \
-	sync extract decide scale-test test lint fmt typecheck check ci demo clean nuke
+.PHONY: help bootstrap env install deps-system deps-py deps-web db-init db-reset \
+	migrate up down logs psql redis-cli \
+	sync extract decide scale-test test lint fmt typecheck check ci demo clean
 
 SHELL := /bin/bash
-COMPOSE := docker compose
+
+# Postgres path varies between Intel and Apple Silicon
+ifeq ($(shell uname -m),arm64)
+  BREW_PREFIX := /opt/homebrew
+else
+  BREW_PREFIX := /usr/local
+endif
+PG_BIN := $(BREW_PREFIX)/opt/postgresql@16/bin
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 # ── First-time setup ──────────────────────────────────────────────────
-bootstrap: env install up migrate ## One-command bootstrap from a clean clone
+bootstrap: env install db-init migrate ## One-command setup from a clean clone
 	@echo ""
 	@echo "✓ Bootstrap complete."
-	@echo "  API:        http://localhost:8000/healthz"
-	@echo "  Web:        http://localhost:3000"
-	@echo "  Prefect:    http://localhost:4200"
-	@echo "  Grafana:    http://localhost:3001"
-	@echo "  Prometheus: http://localhost:9090"
+	@echo "  Run \`make up\` to start the stack (api + web + prefect)."
+	@echo ""
+	@echo "  API:      http://localhost:8000/healthz"
+	@echo "  Web:      http://localhost:3000"
+	@echo "  Prefect:  http://localhost:4200"
 
-env: ## Copy .env.example to .env if .env doesn't exist
-	@test -f .env || (cp .env.example .env && echo "✓ Created .env from .env.example — edit it with real keys")
+env: ## Copy .env.example to .env if not present
+	@test -f .env || (cp .env.example .env && echo "✓ Created .env from .env.example")
 
-install: ## Install Python deps locally for tests + tooling
-	@command -v uv >/dev/null 2>&1 || (echo "uv not found. Install: https://docs.astral.sh/uv/" && exit 1)
-	uv sync --extra dev || uv pip install --system -e ".[dev]"
+install: deps-system deps-py deps-web ## Install Postgres, Redis, Python deps, Node deps
+
+deps-system: ## Install + start Postgres 16 and Redis via Homebrew
+	@command -v brew >/dev/null 2>&1 || { echo "Homebrew not found. Install: https://brew.sh"; exit 1; }
+	@brew list postgresql@16 >/dev/null 2>&1 || brew install postgresql@16
+	@brew list redis >/dev/null 2>&1 || brew install redis
+	@brew services start postgresql@16
+	@brew services start redis
+	@sleep 2  # let postgres open the socket
+
+deps-py: ## Install Python deps via uv
+	@command -v uv >/dev/null 2>&1 || { echo "uv not found. Install: brew install uv"; exit 1; }
+	uv sync --extra dev
+
+deps-web: ## Install Node deps
+	@command -v npm >/dev/null 2>&1 || { echo "npm not found. Install: brew install node@20"; exit 1; }
+	cd web && npm install --no-fund --no-audit
+
+db-init: ## Create the woundiq role + database (idempotent)
+	@$(PG_BIN)/psql -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='woundiq'" | grep -q 1 \
+		|| $(PG_BIN)/psql -d postgres -c "CREATE ROLE woundiq LOGIN PASSWORD 'woundiq_dev_only'"
+	@$(PG_BIN)/psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='woundiq'" | grep -q 1 \
+		|| $(PG_BIN)/psql -d postgres -c "CREATE DATABASE woundiq OWNER woundiq"
+	@$(PG_BIN)/psql -d postgres -c "GRANT ALL PRIVILEGES ON DATABASE woundiq TO woundiq" >/dev/null
+	@echo "✓ Database 'woundiq' ready."
+
+db-reset: ## Drop + recreate the woundiq database (destroys local data)
+	@$(PG_BIN)/psql -d postgres -c "DROP DATABASE IF EXISTS woundiq"
+	@$(MAKE) db-init
+	@$(MAKE) migrate
+
+migrate: ## Run Alembic migrations
+	uv run alembic upgrade head
 
 # ── Stack lifecycle ───────────────────────────────────────────────────
-up: ## Bring the stack up in the background
-	$(COMPOSE) up -d --build
+up: ## Start api, worker (prefect), web in one terminal via honcho
+	uv run honcho start
 
-down: ## Stop the stack
-	$(COMPOSE) down
+down: ## Stop Postgres + Redis system services
+	-brew services stop postgresql@16
+	-brew services stop redis
 
-logs: ## Tail logs from all services
-	$(COMPOSE) logs -f --tail=100
+# ── Database helpers ──────────────────────────────────────────────────
+psql: ## psql shell against the woundiq database
+	$(PG_BIN)/psql -U woundiq -d woundiq -h localhost
 
-ps: ## Show running services
-	$(COMPOSE) ps
-
-# ── Database ──────────────────────────────────────────────────────────
-migrate: ## Run Alembic migrations against the running Postgres
-	$(COMPOSE) exec -T api alembic upgrade head
-
-psql: ## Open a psql shell on the running Postgres
-	$(COMPOSE) exec postgres psql -U $${POSTGRES_USER:-woundiq} -d $${POSTGRES_DB:-woundiq}
-
-redis-cli: ## Open a redis-cli shell on the running Redis
-	$(COMPOSE) exec redis redis-cli
+redis-cli: ## redis-cli shell
+	redis-cli
 
 # ── Pipeline ops (Phase 1+) ───────────────────────────────────────────
-sync: ## Run the ingestion flow against the live mock API
-	$(COMPOSE) exec -T worker python -m pipeline.sync
+sync: ## Run the ingestion flow against the live mock PCC API
+	uv run python -m pipeline.sync
 
 extract: ## Run the extraction flow
-	$(COMPOSE) exec -T worker python -m pipeline.extract
+	uv run python -m pipeline.extract
 
 decide: ## Run the eligibility decision flow
-	$(COMPOSE) exec -T worker python -m pipeline.decide
+	uv run python -m pipeline.decide
 
 scale-test: ## Generate N synthetic patients and benchmark (override N=...)
-	$(COMPOSE) exec -T worker python -m synthetic.generator --n $${N:-1000000}
+	uv run python -m synthetic.generator --n $${N:-1000000}
 
 # ── Quality ───────────────────────────────────────────────────────────
 test: ## Run pytest
-	$(COMPOSE) exec -T api pytest -ra
+	uv run pytest -ra
 
 lint: ## ruff check
 	uv run ruff check .
 
-fmt: ## Format with ruff + black
+fmt: ## ruff --fix + black
 	uv run ruff check --fix .
 	uv run black .
 
 typecheck: ## mypy
 	uv run mypy
 
-check: lint typecheck test ## Run all quality gates
+check: lint typecheck test ## All quality gates
 
-ci: ## What CI runs (lint + typecheck + test, no docker)
+ci: ## What GitHub Actions runs
 	uv run ruff check .
 	uv run black --check .
 	uv run mypy
 	uv run pytest -ra
 
 # ── Demo ──────────────────────────────────────────────────────────────
-demo: bootstrap ## Bring up the stack for a live demo
-	@echo ""
-	@echo "✓ Demo stack is up. Open http://localhost:3000"
+demo: bootstrap up ## Bring the full stack up for a live demo
 
 # ── Housekeeping ──────────────────────────────────────────────────────
-shell: ## Shell into the api container
-	$(COMPOSE) exec api /bin/bash
-
-clean: ## Stop containers, keep volumes
-	$(COMPOSE) down
-
-nuke: ## Stop everything and delete volumes (destroys local data)
-	$(COMPOSE) down -v
+clean: down ## Stop background services

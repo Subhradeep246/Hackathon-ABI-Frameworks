@@ -43,6 +43,8 @@ dev = [
     "types-redis>=4.6",
     "hypothesis>=6.112",
     "httpx[cli]>=0.27",
+    # Process manager for `make up` (runs api + web + prefect in one terminal)
+    "honcho>=2.0",
 ]
 
 [tool.uv]
