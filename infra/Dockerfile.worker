@@ -1,0 +1,26 @@
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir uv
+
+COPY pyproject.toml ./
+RUN uv pip install --system -e ".[dev]"
+
+COPY api ./api
+COPY pipeline ./pipeline
+COPY extraction ./extraction
+COPY eligibility ./eligibility
+COPY synthetic ./synthetic
+COPY alembic.ini ./
+
+# Worker runs Prefect flows; the orchestrator is a separate container.
+CMD ["python", "-m", "pipeline.flows"]

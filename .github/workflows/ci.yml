@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: woundiq
+          POSTGRES_PASSWORD: woundiq_dev_only
+          POSTGRES_DB: woundiq
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U woundiq"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://woundiq:woundiq_dev_only@localhost:5432/woundiq
+      DATABASE_URL_SYNC: postgresql://woundiq:woundiq_dev_only@localhost:5432/woundiq
+      REDIS_URL: redis://localhost:6379/0
+      ORG_ID: ORG-CI
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install deps
+        run: uv pip install --system -e ".[dev]"
+
+      - name: Ruff
+        run: ruff check .
+
+      - name: Black --check
+        run: black --check .
+
+      - name: Mypy
+        run: mypy
+
+      - name: Run migrations
+        run: alembic upgrade head
+
+      - name: Pytest
+        run: pytest -ra -m "not slow and not contract"
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: web/package.json
+
+      - name: Install
+        run: npm install --no-fund --no-audit
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
