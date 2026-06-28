@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pulse — Wound Care Eligibility</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .badge-auto_accept { background: #dcfce7; color: #166534; }
+    .badge-flag_for_review { background: #fef9c3; color: #854d0e; }
+    .badge-reject { background: #fee2e2; color: #991b1b; }
+    .risk-green { background: #22c55e; }
+    .risk-yellow { background: #eab308; }
+    .risk-red { background: #ef4444; }
+    .pulse { animation: pulse 1.5s ease-in-out infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+    .skeleton { background: linear-gradient(90deg,#f1f5f9 25%,#e2e8f0 50%,#f1f5f9 75%); background-size:200% 100%; animation:shimmer 1.2s infinite; }
+    @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+    .live-dot { width:8px;height:8px;border-radius:50%;background:#22c55e;display:inline-block; }
+    .live-dot.syncing { background:#eab308; animation:pulse 1s infinite; }
+    .live-dot.error { background:#ef4444; }
+    .col-filter { display:inline-flex; align-items:center; gap:4px; padding:2px 6px; border-radius:6px; cursor:pointer; user-select:none; }
+    .col-filter:hover { background:#e2e8f0; color:#0f172a; }
+    .col-filter.active { background:#e0e7ff; color:#3730a3; font-weight:600; }
+    .filter-menu { position:absolute; top:100%; left:0; z-index:30; min-width:140px; margin-top:4px; background:#fff; border:1px solid #e2e8f0; border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,.08); padding:4px 0; }
+    .filter-menu button { display:block; width:100%; text-align:left; padding:6px 12px; font-size:13px; color:#334155; }
+    .filter-menu button:hover { background:#f1f5f9; }
+    .filter-menu button.selected { background:#eef2ff; color:#3730a3; font-weight:500; }
+    .slick-scroll {
+      scrollbar-width: thin;
+      scrollbar-color: #94a3b8 transparent;
+    }
+    .slick-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+    .slick-scroll::-webkit-scrollbar-track { background: transparent; margin: 4px 0; }
+    .slick-scroll::-webkit-scrollbar-thumb {
+      background: linear-gradient(180deg, #cbd5e1, #94a3b8);
+      border-radius: 999px;
+      border: 1px solid transparent;
+      background-clip: padding-box;
+    }
+    .slick-scroll::-webkit-scrollbar-thumb:hover { background: #64748b; }
+    .patient-table-scroll {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: auto;
+    }
+    .patient-table-scroll thead th {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      background: #f8fafc;
+      box-shadow: 0 1px 0 #e2e8f0;
+    }
+    .dashboard-columns {
+      align-items: stretch;
+    }
+    @media (min-width: 1024px) {
+      .workspace-pane {
+        height: calc(100vh - 11.5rem);
+        max-height: calc(100vh - 11.5rem);
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        overflow: hidden;
+      }
+      .patient-list-pane {
+        max-height: none;
+      }
+      .detail-pane {
+        position: sticky;
+        top: 5.5rem;
+      }
+      .detail-scroll {
+        flex: 1 1 55%;
+        min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding-right: 2px;
+      }
+      .chat-section {
+        flex: 1 1 45%;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        background: #fff;
+        border-top: 1px solid #e2e8f0;
+        padding-top: 0.75rem;
+        margin-top: 0.25rem;
+        overflow: hidden;
+      }
+      .chat-answer-scroll {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        margin-top: 0.75rem;
+        padding-right: 2px;
+      }
+    }
+    @media (max-width: 1023px) {
+      .detail-scroll { margin-bottom: 1rem; }
+      .chat-section {
+        border-top: 1px solid #e2e8f0;
+        padding-top: 1rem;
+      }
+      .chat-answer-scroll {
+        max-height: 12rem;
+        overflow-y: auto;
+        margin-top: 0.75rem;
+      }
+    }
+    .chat-block {
+      padding: 0.5rem 0.625rem;
+      border-radius: 0.5rem;
+      margin-top: 0.5rem;
+    }
+    .chat-block:first-child { margin-top: 0; }
+    .chat-block-answer { background: #eef2ff; border: 1px solid #e0e7ff; }
+    .chat-block-detail { background: #f8fafc; border: 1px solid #e2e8f0; }
+    .chat-block-action { background: #ecfdf5; border: 1px solid #d1fae5; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-20 shadow-sm">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h1 class="text-lg font-bold tracking-tight">Pulse · Wound Care Eligibility</h1>
+        <p class="text-xs text-slate-500">Auto-syncs from PCC API · AI-powered billing guidance</p>
+      </div>
+      <div class="flex items-center gap-2 text-xs text-slate-500">
+        <span id="liveDot" class="live-dot syncing" title="Connection status"></span>
+        <span id="liveStatus">Connecting…</span>
+        <span id="serverHint" class="hidden text-red-600 max-w-xs text-right"></span>
+      </div>
+    </div>
+    <div id="syncBanner" class="hidden border-t text-sm px-4 py-2">
+      <div class="max-w-7xl mx-auto flex items-center gap-3">
+        <div id="syncProgress" class="flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden hidden">
+          <div id="syncProgressBar" class="h-full bg-emerald-500 transition-all duration-300" style="width:0%"></div>
+        </div>
+        <span id="syncBannerText"></span>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 py-5 space-y-5">
+    <section class="grid grid-cols-2 md:grid-cols-4 gap-3" id="statsCards"></section>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-5 dashboard-columns">
+      <section class="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-4 shadow-sm patient-list-pane workspace-pane">
+        <div class="flex flex-wrap gap-2 mb-3 items-center shrink-0">
+          <input id="searchInput" placeholder="Search name or ID…" class="border rounded-lg px-3 py-2 text-sm flex-1 min-w-[140px]" />
+          <select id="pageSize" class="border rounded-lg px-2 py-2 text-sm bg-white">
+            <option value="25">25</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+          </select>
+        </div>
+        <div class="patient-table-scroll slick-scroll -mx-1 px-1">
+          <table class="w-full text-sm">
+            <thead class="text-left text-slate-500 border-b bg-slate-50">
+              <tr>
+                <th class="py-2 px-2 font-medium">Patient</th>
+                <th class="py-2 px-2 font-medium relative">
+                  <button type="button" class="col-filter" id="filterBtn-facility" data-col="facility">Facility <span class="text-[10px] opacity-60">▾</span></button>
+                  <div id="menu-facility" class="filter-menu hidden"></div>
+                </th>
+                <th class="py-2 px-2 font-medium">Wound</th>
+                <th class="py-2 px-2 font-medium relative">
+                  <button type="button" class="col-filter" id="filterBtn-mcb" data-col="mcb">MCB <span class="text-[10px] opacity-60">▾</span></button>
+                  <div id="menu-mcb" class="filter-menu hidden"></div>
+                </th>
+                <th class="py-2 px-2 font-medium relative">
+                  <button type="button" class="col-filter" id="filterBtn-decision" data-col="decision">Decision <span class="text-[10px] opacity-60">▾</span></button>
+                  <div id="menu-decision" class="filter-menu hidden"></div>
+                </th>
+                <th class="py-2 px-2 font-medium relative">
+                  <button type="button" class="col-filter" id="filterBtn-risk" data-col="risk">Risk <span class="text-[10px] opacity-60">▾</span></button>
+                  <div id="menu-risk" class="filter-menu hidden"></div>
+                </th>
+              </tr>
+            </thead>
+            <tbody id="patientTable"></tbody>
+          </table>
+        </div>
+        <div class="flex items-center justify-between mt-3 text-sm shrink-0 pt-2 border-t border-slate-100">
+          <p id="tableMeta" class="text-slate-500 text-xs"></p>
+          <div class="flex gap-2">
+            <button id="prevPage" class="px-3 py-1 border rounded-lg disabled:opacity-40 hover:bg-slate-50 text-sm">← Prev</button>
+            <button id="nextPage" class="px-3 py-1 border rounded-lg disabled:opacity-40 hover:bg-slate-50 text-sm">Next →</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm detail-pane workspace-pane">
+        <div class="detail-scroll slick-scroll">
+          <div id="detailPanel" class="text-sm text-slate-500 pb-2">
+            <p class="font-medium text-slate-700 mb-1">Patient details</p>
+            <p class="text-xs">Select a row to see the AI billing summary, routing reason, and flagged data gaps.</p>
+          </div>
+        </div>
+        <div class="chat-section">
+          <h3 class="font-medium text-sm mb-2 shrink-0">Billing assistant</h3>
+          <textarea id="chatInput" rows="2" class="w-full shrink-0 border border-slate-200 rounded-lg p-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400" placeholder="Why was this patient flagged?"></textarea>
+          <button id="chatBtn" class="mt-2 w-full shrink-0 py-2.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-500 font-medium disabled:opacity-50">Ask</button>
+          <div id="chatAnswer" class="chat-answer-scroll slick-scroll text-sm text-slate-700 leading-relaxed"></div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const API = '';
+    let selectedPatientId = null;
+    let currentOffset = 0;
+    let totalPatients = 0;
+    let dataVersion = -1;
+    let hasLoadedOnce = false;
+    let refreshInFlight = false;
+    let eventSource = null;
+    let openMenu = null;
+
+    const filters = { facility: '', mcb: '', decision: '', risk: '' };
+
+    const FILTER_OPTIONS = {
+      facility: [
+        { value: '', label: 'All facilities' },
+        { value: '101', label: '101' },
+        { value: '102', label: '102' },
+        { value: '103', label: '103' },
+      ],
+      mcb: [
+        { value: '', label: 'All' },
+        { value: '1', label: 'Has Medicare B ✓' },
+        { value: '0', label: 'No Medicare B ✗' },
+      ],
+      decision: [
+        { value: '', label: 'All decisions' },
+        { value: 'auto_accept', label: 'Auto accept' },
+        { value: 'flag_for_review', label: 'Review' },
+        { value: 'reject', label: 'Reject' },
+      ],
+      risk: [
+        { value: '', label: 'All risk' },
+        { value: 'green', label: 'Low' },
+        { value: 'yellow', label: 'Medium' },
+        { value: 'red', label: 'High' },
+      ],
+    };
+
+    const DECISION_HELP = {
+      auto_accept: 'Documentation complete — safe to proceed with billing.',
+      flag_for_review: 'Missing data or conflicts — verify before submitting.',
+      reject: 'Does not meet Medicare Part B criteria with current data.',
+    };
+
+    function esc(s) {
+      if (s == null) return '';
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function badge(decision) {
+      const labels = { auto_accept: 'Auto accept', flag_for_review: 'Review', reject: 'Reject' };
+      const d = esc(decision);
+      return `<span class="px-2 py-0.5 rounded-full text-xs font-medium badge-${d}">${labels[decision] || d}</span>`;
+    }
+
+    function riskLabel(tier, score) {
+      const names = { green: 'Low', yellow: 'Med', red: 'High' };
+      return `<span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-full risk-${esc(tier)}"></span><span class="text-xs">${names[tier]||tier} (${score})</span></span>`;
+    }
+
+    function skeletonRows(n = 5) {
+      return Array(n).fill(0).map(() => `<tr><td colspan="6" class="py-3"><div class="h-4 skeleton rounded"></div></td></tr>`).join('');
+    }
+
+    function formatTime(iso) {
+      if (!iso) return '—';
+      try { return new Date(iso).toLocaleTimeString(); } catch { return iso; }
+    }
+
+    function queryParams() {
+      const limit = parseInt(document.getElementById('pageSize').value, 10);
+      const params = new URLSearchParams({ limit: String(limit), offset: String(currentOffset) });
+      if (filters.facility) params.set('facility_id', filters.facility);
+      if (filters.decision) params.set('routing_decision', filters.decision);
+      if (filters.risk) params.set('risk_tier', filters.risk);
+      if (filters.mcb !== '') params.set('has_medicare_b', filters.mcb);
+      const s = document.getElementById('searchInput').value.trim();
+      if (s) params.set('search', s);
+      return params;
+    }
+
+    function buildFilterMenus() {
+      for (const [col, options] of Object.entries(FILTER_OPTIONS)) {
+        const menu = document.getElementById(`menu-${col}`);
+        menu.innerHTML = options.map(o =>
+          `<button type="button" data-col="${col}" data-value="${esc(o.value)}" class="${filters[col] === o.value ? 'selected' : ''}">${esc(o.label)}</button>`
+        ).join('');
+      }
+      document.querySelectorAll('.col-filter').forEach(btn => {
+        const col = btn.dataset.col;
+        btn.classList.toggle('active', filters[col] !== '');
+      });
+    }
+
+    function closeAllMenus() {
+      document.querySelectorAll('.filter-menu').forEach(m => m.classList.add('hidden'));
+      openMenu = null;
+    }
+
+    function toggleMenu(col) {
+      const menu = document.getElementById(`menu-${col}`);
+      if (openMenu === col) { closeAllMenus(); return; }
+      closeAllMenus();
+      buildFilterMenus();
+      menu.classList.remove('hidden');
+      openMenu = col;
+    }
+
+    function setFilter(col, value) {
+      filters[col] = value;
+      closeAllMenus();
+      buildFilterMenus();
+      resetPage();
+      loadDashboard();
+    }
+
+    function renderStats(data) {
+      const cards = [
+        ['Total patients', (data.total_patients||0).toLocaleString(), 'Synced from API'],
+        ['Ready to bill', data.by_decision?.auto_accept||0, 'Auto accept'],
+        ['Needs review', data.by_decision?.flag_for_review||0, 'Action required'],
+        ['Not eligible', data.by_decision?.reject||0, 'Reject'],
+      ];
+      document.getElementById('statsCards').innerHTML = cards.map(([k,v,sub]) => `
+        <div class="bg-white rounded-xl border border-slate-200 p-3 shadow-sm">
+          <div class="text-[10px] text-slate-500 uppercase tracking-wide">${esc(k)}</div>
+          <div class="text-2xl font-bold mt-0.5">${esc(v)}</div>
+          <div class="text-[10px] text-slate-400 mt-0.5 truncate">${esc(sub)}</div>
+        </div>`).join('');
+    }
+
+    function renderPatients(data) {
+      totalPatients = data.total || 0;
+      const tbody = document.getElementById('patientTable');
+      tbody.innerHTML = data.items.map(p => `
+        <tr class="border-b hover:bg-indigo-50/50 cursor-pointer transition-colors ${selectedPatientId===p.patient_id?'bg-indigo-50':''}" data-pid="${esc(p.patient_id)}">
+          <td class="py-2 px-2"><div class="font-medium">${esc(p.patient_id)}</div><div class="text-xs text-slate-500">${esc(p.first_name)} ${esc(p.last_name)}</div></td>
+          <td class="py-2 px-2">${esc(p.facility_id)}</td>
+          <td class="py-2 px-2 text-xs">${esc((p.primary_wound_type||'—').replace(/_/g,' '))} ${p.primary_wound_stage?'S'+esc(p.primary_wound_stage):''}</td>
+          <td class="py-2 px-2 text-center">${p.has_active_medicare_b?'<span class="text-emerald-600">✓</span>':'<span class="text-red-500">✗</span>'}</td>
+          <td class="py-2 px-2">${badge(p.routing_decision)}</td>
+          <td class="py-2 px-2">${riskLabel(p.unknown_risk_tier,p.unknown_risk_score)}</td>
+        </tr>`).join('') || '<tr><td colspan="6" class="py-8 text-center text-slate-500">No patients yet — auto-sync is running…</td></tr>';
+
+      tbody.querySelectorAll('tr[data-pid]').forEach(row => row.addEventListener('click', () => showPatient(row.dataset.pid)));
+
+      const limit = parseInt(document.getElementById('pageSize').value, 10);
+      const showing = data.items.length;
+      const from = totalPatients ? currentOffset + 1 : 0;
+      document.getElementById('tableMeta').textContent = totalPatients
+        ? `Showing ${from}–${currentOffset+showing} of ${totalPatients.toLocaleString()}`
+        : 'Waiting for data…';
+      document.getElementById('prevPage').disabled = currentOffset <= 0;
+      document.getElementById('nextPage').disabled = currentOffset + limit >= totalPatients;
+    }
+
+    let retryTimer = null;
+
+    async function loadDashboard(silent = false) {
+      if (refreshInFlight) return;
+      refreshInFlight = true;
+      const tbody = document.getElementById('patientTable');
+      if (!silent && !hasLoadedOnce) tbody.innerHTML = skeletonRows();
+
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 15000);
+        const res = await fetch(`${API}/api/dashboard?${queryParams()}`, { signal: ctrl.signal });
+        clearTimeout(t);
+        if (!res.ok) throw new Error('API error');
+        const payload = await res.json();
+        if (payload.version !== undefined && payload.version === dataVersion && silent) {
+          refreshInFlight = false;
+          return;
+        }
+        dataVersion = payload.version ?? dataVersion;
+        renderStats(payload.stats);
+        renderPatients(payload.patients);
+        updateSyncBanner(payload.stats.pipeline);
+        setLiveStatus('ok', payload.stats.updated_at);
+        hasLoadedOnce = true;
+        document.getElementById('serverHint').classList.add('hidden');
+        if (retryTimer) { clearInterval(retryTimer); retryTimer = null; }
+      } catch (e) {
+        if (!hasLoadedOnce) {
+          tbody.innerHTML = '<tr><td colspan="6" class="py-4 text-center text-red-600">Cannot reach server — start it with:<br><code class="text-xs bg-slate-100 px-2 py-1 rounded mt-1 inline-block">uvicorn backend.api.main:app --port 8000</code></td></tr>';
+        }
+        setLiveStatus('error');
+        const hint = document.getElementById('serverHint');
+        hint.textContent = 'Run: uvicorn backend.api.main:app --port 8000';
+        hint.classList.remove('hidden');
+        scheduleRetry();
+      } finally {
+        refreshInFlight = false;
+      }
+    }
+
+    function scheduleRetry() {
+      if (retryTimer) return;
+      retryTimer = setInterval(() => {
+        if (!refreshInFlight) loadDashboard(!hasLoadedOnce);
+      }, 3000);
+    }
+
+    function setLiveStatus(state, updatedAt) {
+      const dot = document.getElementById('liveDot');
+      const label = document.getElementById('liveStatus');
+      dot.className = 'live-dot' + (state === 'syncing' ? ' syncing' : state === 'error' ? ' error' : '');
+      if (state === 'syncing') label.textContent = 'Syncing from API…';
+      else if (state === 'error') label.textContent = 'Reconnecting…';
+      else label.textContent = updatedAt ? `Live · ${formatTime(updatedAt)}` : 'Live';
+    }
+
+    function updateSyncBanner(pipeline) {
+      const banner = document.getElementById('syncBanner');
+      const text = document.getElementById('syncBannerText');
+      const bar = document.getElementById('syncProgress');
+      const barFill = document.getElementById('syncProgressBar');
+      if (!pipeline || pipeline.status === 'idle') {
+        banner.classList.add('hidden');
+        return;
+      }
+      banner.classList.remove('hidden');
+      if (pipeline.status === 'running') {
+        banner.className = 'border-t text-sm px-4 py-2 bg-amber-50 border-amber-200 text-amber-900';
+        text.textContent = pipeline.message || 'Syncing…';
+        text.classList.add('pulse');
+        bar.classList.remove('hidden');
+        barFill.style.width = `${pipeline.progress_pct || 10}%`;
+        setLiveStatus('syncing');
+        return;
+      }
+      if (pipeline.status === 'complete') {
+        banner.className = 'border-t text-sm px-4 py-2 bg-emerald-50 border-emerald-200 text-emerald-900';
+        text.textContent = pipeline.message || 'Updated.';
+        text.classList.remove('pulse');
+        barFill.style.width = '100%';
+        setTimeout(() => banner.classList.add('hidden'), 4000);
+        return;
+      }
+      if (pipeline.status === 'failed') {
+        banner.className = 'border-t text-sm px-4 py-2 bg-red-50 border-red-200 text-red-900';
+        text.textContent = pipeline.message || 'Sync failed — will retry automatically.';
+        bar.classList.add('hidden');
+      }
+    }
+
+    function decisionLabel(d) {
+      return { auto_accept: 'Auto accept', flag_for_review: 'Review', reject: 'Reject' }[d] || d;
+    }
+
+    function renderModelInsight(insight) {
+      if (!insight) return '';
+      const pct = Math.round((insight.model_probability || 0) * 100);
+      const agrees = insight.rule_agrees;
+      const suggestion = decisionLabel(insight.model_suggestion);
+      return `
+        <div class="text-xs bg-violet-50 p-2.5 rounded border border-violet-100">
+          <div class="font-medium text-violet-900">ML cross-check</div>
+          <p class="mt-1 text-violet-950">Suggests <strong>${esc(suggestion)}</strong> (${pct}% confidence)${agrees ? ' — matches rules ✓' : ' — differs from rules ⚠'}</p>
+          <p class="text-[10px] text-violet-700 mt-1 leading-relaxed">A trained decision tree on patient features. Advisory only — rules engine makes the final call.</p>
+        </div>`;
+    }
+
+    function renderSummarySections(ai, patient) {
+      const sections = ai.sections || {};
+      const order = ['Billing decision', 'Medicare Part B', 'Data gaps', 'What to do next'];
+      const icons = {
+        'Billing decision': '📋',
+        'Medicare Part B': '🏥',
+        'Data gaps': '⚠️',
+        'What to do next': '→',
+      };
+      const keys = order.filter(k => sections[k]);
+      if (!keys.length) {
+        return `<p class="mt-1 text-indigo-900">${esc(ai.summary || patient.routing_reason)}</p>`;
+      }
+      return keys.map(k => `
+        <div class="mt-2 pt-2 border-t border-indigo-100 first:mt-1 first:pt-0 first:border-0">
+          <div class="font-semibold text-indigo-800 text-[11px] uppercase tracking-wide">${icons[k] || '•'} ${esc(k)}</div>
+          <p class="mt-0.5 text-indigo-900 leading-relaxed">${esc(sections[k])}</p>
+        </div>`).join('');
+    }
+
+    function renderDataGaps(flags) {
+      if (!flags.length) return '<li class="text-slate-400">None flagged</li>';
+      return flags.map(f => {
+        const label = f.flag_type.replace(/_/g, ' ');
+        const count = f.count > 1 ? ` <span class="text-amber-600 font-medium">(${f.count} notes)</span>` : '';
+        return `<li class="text-amber-800 bg-amber-50 px-2 py-1 rounded">• <strong>${esc(label)}</strong>${count}: ${esc(f.detail || f.severity)}</li>`;
+      }).join('');
+    }
+
+    async function showPatient(patientId) {
+      selectedPatientId = patientId;
+      setChatAnswer('');
+      const panel = document.getElementById('detailPanel');
+      panel.innerHTML = '<div class="skeleton h-28 rounded"></div>';
+      document.querySelectorAll('#patientTable tr[data-pid]').forEach(r => {
+        r.classList.toggle('bg-indigo-50', r.dataset.pid === patientId);
+      });
+      const row = document.querySelector(`#patientTable tr[data-pid="${CSS.escape(patientId)}"]`);
+      if (row) row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+
+      try {
+        const res = await fetch(`${API}/api/patients/${encodeURIComponent(patientId)}?with_summary=true`);
+        if (!res.ok) throw new Error('not found');
+        const data = await res.json();
+        const p = data.patient;
+        const ai = data.ai_summary || {};
+        const srcLabel = ai.source === 'baseten' || ai.source === 'cache' ? 'AI summary' : 'Rule-based';
+        panel.innerHTML = `
+          <div class="space-y-4">
+            <div>
+              <h2 class="text-lg font-bold leading-tight">${esc(p.patient_id)}</h2>
+              <p class="text-slate-600 text-xs mt-0.5">${esc(p.first_name)} ${esc(p.last_name)} · Facility ${esc(p.facility_id)}</p>
+            </div>
+            <div class="flex flex-wrap gap-2">${badge(p.routing_decision)} ${riskLabel(p.unknown_risk_tier,p.unknown_risk_score)}</div>
+            <div class="text-xs bg-indigo-50 border border-indigo-100 p-3 rounded-lg">
+              <span class="font-medium text-indigo-800">${esc(srcLabel)}</span>
+              ${renderSummarySections(ai, p)}
+            </div>
+            <p class="text-xs text-slate-600 leading-relaxed"><strong>Rule reason:</strong> ${esc(p.routing_reason)}</p>
+            <div class="grid grid-cols-2 gap-2 text-xs">
+              <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-100"><span class="text-slate-500 block text-[10px] uppercase mb-0.5">Wound</span>${esc((p.primary_wound_type||'—').replace(/_/g,' '))}</div>
+              <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-100"><span class="text-slate-500 block text-[10px] uppercase mb-0.5">Stage</span>${esc(p.primary_wound_stage||'—')}</div>
+              <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-100"><span class="text-slate-500 block text-[10px] uppercase mb-0.5">Size (L×W×D)</span>${esc(p.length_cm??'—')}×${esc(p.width_cm??'—')}×${esc(p.depth_cm??'—')} cm</div>
+              <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-100"><span class="text-slate-500 block text-[10px] uppercase mb-0.5">Medicare B</span>${p.has_active_medicare_b?'Active':'Not active'}</div>
+            </div>
+            ${renderModelInsight(data.model_insight)}
+            <div class="pb-1">
+              <h3 class="font-medium text-xs mb-1">Data gaps</h3>
+              <p class="text-[10px] text-slate-500 mb-2">Issues that make billing risky or incomplete — not necessarily errors.</p>
+              <ul class="text-xs space-y-1.5">${renderDataGaps(data.unknown_flags)}</ul>
+            </div>
+          </div>`;
+        const scroll = panel.closest('.detail-scroll');
+        if (scroll) scroll.scrollTop = 0;
+      } catch {
+        panel.innerHTML = '<p class="text-red-600 text-sm">Patient not found or unavailable.</p>';
+      }
+    }
+
+    function renderChatAnswer(text) {
+      if (!text) return '';
+      const labels = {
+        ANSWER: { title: 'Answer', cls: 'chat-block-answer' },
+        DETAILS: { title: 'Details', cls: 'chat-block-detail' },
+        WHY: { title: 'Why', cls: 'chat-block-detail' },
+        NEXT_STEP: { title: 'What to do', cls: 'chat-block-action' },
+        'NEXT STEP': { title: 'What to do', cls: 'chat-block-action' },
+        ACTION: { title: 'What to do', cls: 'chat-block-action' },
+      };
+      const blocks = [];
+      for (const line of text.split('\n')) {
+        const stripped = line.trim().replace(/^\*\*|\*\*$/g, '');
+        if (!stripped) continue;
+        let matched = false;
+        for (const [key, meta] of Object.entries(labels)) {
+          const prefix = key + ':';
+          if (stripped.toUpperCase().startsWith(prefix)) {
+            blocks.push({ title: meta.title, cls: meta.cls, body: stripped.slice(prefix.length).trim().replace(/\*\*/g, '') });
+            matched = true;
+            break;
+          }
+        }
+        if (!matched && blocks.length) {
+          blocks[blocks.length - 1].body += ' ' + stripped.replace(/\*\*/g, '');
+        } else if (!matched) {
+          blocks.push({ title: 'Answer', cls: 'chat-block-answer', body: stripped.replace(/\*\*/g, '') });
+        }
+      }
+      if (blocks.length >= 2) {
+        return blocks.map(b => `
+          <div class="chat-block ${b.cls}">
+            <div class="text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-0.5">${esc(b.title)}</div>
+            <p class="text-slate-800 leading-relaxed">${esc(b.body)}</p>
+          </div>`).join('');
+      }
+      const clean = text.replace(/\*\*/g, '').trim();
+      const sentences = clean.match(/[^.!?]+[.!?]+/g) || [clean];
+      if (sentences.length >= 2) {
+        return `
+          <div class="chat-block chat-block-answer">
+            <div class="text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-0.5">Answer</div>
+            <p class="text-slate-800 leading-relaxed">${esc(sentences[0].trim())}</p>
+          </div>
+          <div class="chat-block chat-block-detail">
+            <div class="text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-0.5">Details</div>
+            <p class="text-slate-800 leading-relaxed">${esc(sentences.slice(1).join(' ').trim())}</p>
+          </div>`;
+      }
+      return `
+        <div class="chat-block chat-block-answer">
+          <div class="text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-0.5">Answer</div>
+          <p class="text-slate-800 leading-relaxed">${esc(clean)}</p>
+        </div>`;
+    }
+
+    function setChatAnswer(text) {
+      const el = document.getElementById('chatAnswer');
+      if (!text || text === 'Thinking…') {
+        el.innerHTML = text ? `<p class="text-slate-500 italic">${esc(text)}</p>` : '';
+      } else {
+        el.innerHTML = renderChatAnswer(text);
+      }
+      el.scrollTop = 0;
+    }
+
+    async function askChat() {
+      const question = document.getElementById('chatInput').value.trim();
+      if (!question) return;
+      if (!selectedPatientId) {
+        setChatAnswer('Select a patient first.');
+        return;
+      }
+      const btn = document.getElementById('chatBtn');
+      btn.disabled = true;
+      document.getElementById('chatAnswer').innerHTML = '<p class="text-slate-500 italic">Thinking…</p>';
+      try {
+        const res = await fetch(`${API}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question, patient_id: selectedPatientId }),
+        });
+        const data = await res.json();
+        setChatAnswer(data.answer || 'No response.');
+      } catch {
+        setChatAnswer('Request failed — try again.');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function connectSSE() {
+      if (eventSource) eventSource.close();
+      if (typeof EventSource === 'undefined') return;
+      eventSource = new EventSource(`${API}/api/events`);
+      eventSource.onmessage = (e) => {
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg.pipeline) updateSyncBanner(msg.pipeline);
+          if (msg.version !== undefined && msg.version !== dataVersion) {
+            loadDashboard(true);
+            if (selectedPatientId) showPatient(selectedPatientId);
+          }
+        } catch {}
+      };
+      eventSource.onerror = () => {
+        eventSource.close();
+        eventSource = null;
+        setTimeout(connectSSE, 5000);
+      };
+    }
+
+    async function boot() {
+      await loadDashboard();
+      buildFilterMenus();
+      connectSSE();
+      // Fallback poll if SSE drops
+      setInterval(() => { if (!refreshInFlight) loadDashboard(true); }, 60000);
+    }
+
+    function resetPage() { currentOffset = 0; }
+
+    document.querySelectorAll('.col-filter').forEach(btn => {
+      btn.addEventListener('click', e => { e.stopPropagation(); toggleMenu(btn.dataset.col); });
+    });
+    document.addEventListener('click', e => {
+      if (!e.target.closest('.filter-menu') && !e.target.closest('.col-filter')) closeAllMenus();
+    });
+    document.querySelectorAll('.filter-menu').forEach(menu => {
+      menu.addEventListener('click', e => {
+        const btn = e.target.closest('button[data-col]');
+        if (!btn) return;
+        setFilter(btn.dataset.col, btn.dataset.value);
+      });
+    });
+
+    document.getElementById('pageSize').addEventListener('change', () => { resetPage(); loadDashboard(); });
+    document.getElementById('searchInput').addEventListener('input', () => {
+      clearTimeout(window._searchTimer);
+      window._searchTimer = setTimeout(() => { resetPage(); loadDashboard(); }, 200);
+    });
+    document.getElementById('prevPage').addEventListener('click', () => {
+      const limit = parseInt(document.getElementById('pageSize').value, 10);
+      currentOffset = Math.max(0, currentOffset - limit);
+      loadDashboard();
+    });
+    document.getElementById('nextPage').addEventListener('click', () => {
+      const limit = parseInt(document.getElementById('pageSize').value, 10);
+      if (currentOffset + limit < totalPatients) { currentOffset += limit; loadDashboard(); }
+    });
+    document.getElementById('chatBtn').addEventListener('click', askChat);
+    document.getElementById('chatInput').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); askChat(); } });
+
+    boot();
+  </script>
+</body>
+</html>

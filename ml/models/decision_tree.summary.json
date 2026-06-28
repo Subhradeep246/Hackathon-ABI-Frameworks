@@ -1,0 +1,22 @@
+{
+  "model_path": "ml/models/decision_tree.joblib",
+  "rows": 300,
+  "cv_accuracy": 0.8400000000000001,
+  "test_accuracy": 0.7833333333333333,
+  "logistic_baseline": 0.9166666666666666,
+  "feature_importances": {
+    "facility_id": 0.0,
+    "has_active_medicare_b": 0.4994917439381118,
+    "unknown_risk_score": 0.3148234886778964,
+    "unknown_flag_count": 0.0,
+    "note_assessment_conflict": 0.0,
+    "multiple_eligible_wounds": 0.0,
+    "envive_narrative_only": 0.0,
+    "length_cm": 0.0,
+    "width_cm": 0.1297243157528948,
+    "depth_cm": 0.055960451631097176,
+    "active_dx_count": 0.0,
+    "note_count": 0.0,
+    "assessment_count": 0.0
+  }
+}
